@@ -183,6 +183,20 @@ class DatasetTs(Dataset, ABC):
         """
         pass
 
+    @abstractmethod
+    def join(self, other, dim):
+        """
+        Concatenate two objects along the chosen dimension.
+
+        Parameters
+        ----------
+        other: DatasetTs
+            Another DatasetTs object with the same dimensions.
+        dim: str
+            Dimension to join data along. Must exist in each dataset
+        """
+        pass
+
     def _init_time_units(self, _default_units: str) -> str:
         try:
             time_units = self.dataset['time'].getncattr('units')
@@ -874,6 +888,7 @@ class OrthoMultiTs(DatasetTs):
             self._init_location_id_and_time()
 
             self.global_attr["featureType"] = "timeSeries"
+            self.global_attr["timeSeries_format"] = "OrthoMultiTs"
 
     def _init_dimensions(self):
         """
@@ -1039,6 +1054,24 @@ class OrthoMultiTs(DatasetTs):
             self.dataset.variables[key][idx, _slice] = \
                 data[key].reshape(1, data[key].size)
 
+    def join(self, other):
+        """
+        Concatenate two OrthoMultiTsTimeSeries objects along the
+        observation (time) dimension.
+
+        Parameters
+        ----------
+        other
+        dim
+
+        Returns
+        -------
+
+        """
+        pass
+        # self.obs_dim_name ... other.obs_dim_name
+
+
 
 class ContiguousRaggedTs(DatasetTs):
     """
@@ -1109,6 +1142,8 @@ class ContiguousRaggedTs(DatasetTs):
             self._init_location_id_and_time()
 
             self.global_attr["featureType"] = "timeSeries"
+            self.global_attr["timeSeries_format"] = "ContiguousRaggedTs"
+
 
         self.constant_dates = False
 
@@ -1307,6 +1342,8 @@ class IndexedRaggedTs(DatasetTs):
             self._init_location_id_and_time()
 
             self.global_attr["featureType"] = "timeSeries"
+            self.global_attr["timeSeries_format"] = "IndexedRaggedTs"
+
 
         self.not_timeseries.append(self.obs_loc_lut)
         self.constant_dates = False
@@ -1513,6 +1550,10 @@ class IndexedRaggedTs(DatasetTs):
             units = self.dataset.variables[self.time_var].units
             self.dataset.variables[self.time_var][index] = \
                 netCDF4.date2num(dates, units=units, calendar="standard")
+
+    def join(self, other):
+        raise NotImplementedError()
+
 
 
 class GriddedNcTs(GriddedTsBase):
@@ -1786,3 +1827,28 @@ class GriddedNcIndexedRaggedTs(GriddedNcTs):
         del data[datefield]
         self.fid.write(gpi, data, dates, lon=lons, lat=lats, dates_direct=True)
         self.close()
+
+
+if __name__ == '__main__':
+    with OrthoMultiTs("/tmp/one.nc", mode='w', n_loc=10) as ds:
+        for i in range(1, 11):
+            start, end = '2018-01-01', '2018-04-04'
+            timestamps = pd.date_range(start, end, freq='6h')
+            data = {v: np.random.rand(len(timestamps))
+                    for v in ['var1', 'var2']}
+            dates = np.array([t.to_pydatetime() for t in timestamps])
+            ds.write(i, data, dates, lon=1/i, lat=1/i)
+
+    with OrthoMultiTs("/tmp/two.nc", mode='w', n_loc=10) as ds:
+        for i in range(1, 11):
+            start, end = '2018-04-04', '2018-04-30'
+            timestamps = pd.date_range(start, end, freq='12h')
+            data = {v: np.random.rand(len(timestamps))
+                    for v in ['var1', 'var2']}
+            dates = np.array([t.to_pydatetime() for t in timestamps])
+            ds.write(i, data, dates, lon=1/i, lat=1/i)
+
+    ds1 = OrthoMultiTs("/tmp/one.nc", mode='r')
+    ds2 = OrthoMultiTs("/tmp/two.nc", mode='r')
+
+    ds3 = ds1.join(ds2)

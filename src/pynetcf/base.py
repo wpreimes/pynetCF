@@ -32,9 +32,12 @@ using Climate Forecast Metadata Conventions (http://cfconventions.org/).
 import os
 import time
 import numpy as np
-import netCDF4
+import xarray as xr
 import datetime
+import warnings
+from pathlib import Path
 
+from pynetcf.const import alias_a
 
 class DatasetError(Exception):
     pass
@@ -42,41 +45,42 @@ class DatasetError(Exception):
 
 class Dataset:
     """
-    NetCDF file wrapper class that makes some things easier
+    netCDF file wrapper class that makes some things easier. Built around
+    xarray Dataset.
 
     Parameters
     ----------
-    filename : string
-        filename of netCDF file. If already exiting then it will be opened
+    filename : str or Path
+        Filename of netCDF file. If already exiting then it will be opened
         as read only unless the append keyword is set. if the overwrite
         keyword is set then the file will be overwritten
-    name : string, optional
-        will be written as a global attribute if the file is a new file
-    file_format : string, optional
+    name : str, optional (default: None)
+        A name for this dataset. Will be written as a global attribute if
+        the file is a new file.
+    file_format : str, optional
+        KEYWORD DEPRECATED in v0.6
         file format
-    mode : string, optional
-        access mode. default "r"
-        "r" means read-only; no data can be modified.
-        "w" means write; a new file is created, an existing file with the
-            same name is deleted.
-        "a" and "r+" mean append (in analogy with serial files); an existing
-            file is opened for reading and writing.
+    mode : str, optional (default: "r")
+        File access mode. Default is "read-only"
+        - "r": means read-only; no data can be modified.
+        - "w": means write; a new file is created, an existing file with the
+               same name is deleted.
+        - "a" and "r+" mean append (in analogy with serial files); an existing
+          file is opened for reading and writing.
         Appending s to modes w, r+ or a will enable unbuffered shared access
         to NETCDF3_CLASSIC or NETCDF3_64BIT formatted files. Unbuffered
         access may be useful even if you don"t need shared access, since it
         may be faster for programs that don"t access data sequentially.
         This option is ignored for NETCDF4 and NETCDF4_CLASSIC
         formatted files.
-    zlib : boolean, optional
-        Default True
-        if set netCDF compression will be used
-    complevel : int, optional
-        Default 4
-        compression level used from 1(low compression) to 9(high compression)
-    autoscale : bool, optional
+    zlib : boolean, optional (default: True)
+        If set, netCDF compression will be used
+    complevel : int, optional (default: 4)
+        Compression level used from 1 (low compression) to 9 (high compression)
+    autoscale : bool, optional (default: True)
         If disabled data will not be automatically scaled when reading and
         writing
-    automask : bool, optional
+    automask : bool, optional (default: True)
         If disabled data will not be masked during reading.
         This means Fill Values will be used instead of NaN.
     """
@@ -84,41 +88,50 @@ class Dataset:
     def __init__(self,
                  filename,
                  name=None,
-                 file_format="NETCDF4",
+                 file_format=None,
                  mode="r",
                  zlib=True,
                  complevel=4,
                  autoscale=True,
                  automask=True):
 
-        self.dataset_name = name
-        self.filename = filename
+        if file_format is not None:
+            warnings.warn(
+                "The `file_format` keyword argument is deprecated "
+                "and will be ignored",
+                DeprecationWarning, stacklevel=2)
+
+        self.buf_len = 0 ### ??
         self.file = None
+
+        self.filename = filename
         self.file_format = file_format
-        self.buf_len = 0
-        self.global_attr = {}
-        self.global_attr["id"] = os.path.split(self.filename)[1]
-        s = "%Y-%m-%d %H:%M:%S"
-        self.global_attr["date_created"] = datetime.datetime.now().strftime(s)
-        if self.dataset_name is not None:
-            self.global_attr["dataset_name"] = self.dataset_name
+        self.global_attr = dict(
+            id=os.path.split(self.filename)[1],
+            date_created=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        if name is not None:
+            self.global_attr["dataset_name"] = name
         self.zlib = zlib
         self.complevel = complevel
         self.mode = mode
         self.autoscale = autoscale
         self.automask = automask
 
+        if self.mode in alias_a:
+            self.mode = 'a'
         if self.mode == "a" and not os.path.exists(self.filename):
             self.mode = "w"
         if self.mode == "w":
             self._create_file_dir()
 
-        try:
-            self.dataset = netCDF4.Dataset(self.filename,
-                                           self.mode,
-                                           format=self.file_format)
-        except RuntimeError:
-            raise IOError(f"File {self.filename} does not exist")
+        if mode in ['r', 'a']:
+            if not os.path.exists(self.filename):
+                raise IOError(f"File {self.filename} does not exist.")
+            self.dataset = xr.open_dataset(self.filename)
+        else:
+            self.dataset = xr.Dataset()
 
         self.dataset.set_auto_scale(self.autoscale)
         self.dataset.set_auto_mask(self.automask)
