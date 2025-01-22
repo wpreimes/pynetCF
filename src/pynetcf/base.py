@@ -101,8 +101,12 @@ class Dataset:
                 "and will be ignored",
                 DeprecationWarning, stacklevel=2)
 
+        """
         self.buf_len = 0 ### ??
         self.file = None
+        self.autoscale = autoscale
+        self.automask = automask
+        """
 
         self.filename = filename
         self.file_format = file_format
@@ -116,8 +120,7 @@ class Dataset:
         self.zlib = zlib
         self.complevel = complevel
         self.mode = mode
-        self.autoscale = autoscale
-        self.automask = automask
+
 
         if self.mode in alias_a:
             self.mode = 'a'

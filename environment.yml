@@ -8,6 +8,7 @@ dependencies:
 - netCDF4
 - pykdtree
 - pyproj
+- xarray
 - pip
 - pip:
   - pygeobase
