@@ -101,23 +101,26 @@ class Dataset:
                 "and will be ignored",
                 DeprecationWarning, stacklevel=2)
 
+        # DEPRECATED KWS
         self.buf_len = 0 ### ??
         self.file = None
+        self.file_format = file_format
+        self.autoscale = autoscale
+        self.automask = automask
+
 
         self.filename = filename
-        self.file_format = file_format
-        self.global_attr = dict(
+        self._global_attr = dict(
             id=os.path.split(self.filename)[1],
             date_created=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
 
         if name is not None:
-            self.global_attr["dataset_name"] = name
+            self._global_attr["dataset_name"] = name
         self.zlib = zlib
         self.complevel = complevel
         self.mode = mode
-        self.autoscale = autoscale
-        self.automask = automask
+
 
         if self.mode in alias_a:
             self.mode = 'a'
@@ -129,12 +132,18 @@ class Dataset:
         if mode in ['r', 'a']:
             if not os.path.exists(self.filename):
                 raise IOError(f"File {self.filename} does not exist.")
-            self.dataset = xr.open_dataset(self.filename)
+            self.dataset = xr.open_dataset(self.filename,
+                                           engine="netcdf4")
         else:
             self.dataset = xr.Dataset()
 
+        ## Deprecated
         self.dataset.set_auto_scale(self.autoscale)
         self.dataset.set_auto_mask(self.automask)
+
+    @property
+    def global_attr(self):
+        return self.dataset.attrs
 
     def _create_file_dir(self):
         """
@@ -154,10 +163,9 @@ class Dataset:
         """
         Write global attributes to NetCDF file.
         """
-        self.dataset.setncatts(self.global_attr)
-        self.global_attr = {}
+        self.dataset.attrs.update(self.global_attr)
 
-    def create_dim(self, name, n):
+    def create_dim(self, name, n, axis=0):
         """
         Create dimension for NetCDF file.
         if it does not yet exist
@@ -168,15 +176,17 @@ class Dataset:
             Name of the NetCDF dimension.
         n : int
             Size of the dimension.
+        axis : int, optional (default: 0)
+            The axis along which to create the dimension.
         """
-        if name not in self.dataset.dimensions.keys():
-            self.dataset.createDimension(name, size=n)
+        if name not in self.dataset.dims.keys():
+            self.dataset.expand_dims({name: n}, axis=axis)
 
     def write_var(self,
                   name,
                   data=None,
                   dim=None,
-                  attr={},
+                  attr=None,
                   dtype=None,
                   zlib=None,
                   complevel=None,
@@ -197,37 +207,57 @@ class Dataset:
             A tuple containing the dimension names.
         attr : dict, optional
             A dictionary containing the variable attributes.
-        dtype: data type, string or numpy.dtype, optional
-            if not given data.dtype will be used
-        zlib: boolean, optional
-            explicit compression for this variable
-            if not given then global attribute is used
-        complevel: int, optional
-            explicit compression level for this variable
+            May contain field `_FillValue` to set the fill value for
+            this variable manually .
+        dtype: str or np.dtype, optional (default: None)
+            Data type to use for encoding this variable.
+            If not given data.dtype will be used
+        zlib: bool, optional (default: None)
+            Can be used to force activate/deactivate compression for this
+            variable. If not specified, use the chosen global attribute
+            (self.zlib).
+        complevel: int, optional (default: 4)
+            Explicit compression level for this variable
             if not given then global attribute is used
         chunksizes : tuple, optional
             chunksizes can be used to manually specify the
             HDF5 chunksizes for each dimension of the variable.
+        **kwargs:
+            Additional kwargs are forwarded to xr.DataArray.
         """
 
-        fill_value = None
+        attr = attr or dict()
+
         if "_FillValue" in attr:
             fill_value = attr.pop("_FillValue")
+        else:
+            fill_value = None
 
         if dtype is None:
             dtype = data.dtype
 
         if zlib is None:
             zlib = self.zlib
+
         if not np.issubdtype(dtype, np.number):
             # Only numeric data can be compressed
             zlib = False
+
         if complevel is None:
             complevel = self.complevel
 
-        if name in self.dataset.variables.keys():
-            var = self.dataset.variables[name]
+        if name in self.dataset.data_vars:
+            var = self.dataset[name]
         else:
+            var = xr.DataArray(name=name, data=data, dims=dim, **kwargs)
+            var.encoding["_FillValue"] = fill_value
+            var.encoding["dtype"] = dtype
+            var.encoding["zlib"] = zlib
+            var.encoding["complevel"] = complevel
+
+            if chunksizes is not None:
+                var = var.chunk(chunksizes)
+
             var = self.dataset.createVariable(name,
                                               dtype,
                                               dim,
