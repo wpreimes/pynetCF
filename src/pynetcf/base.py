@@ -95,11 +95,13 @@ class Dataset:
                  autoscale=True,
                  automask=True):
 
-        if file_format is not None:
-            warnings.warn(
-                "The `file_format` keyword argument is deprecated "
-                "and will be ignored",
-                DeprecationWarning, stacklevel=2)
+        for k, v in zip(['file_format', 'autoscale', 'automask'],
+                        [file_format, autoscale, automask]):
+            if v is not None:
+                warnings.warn(
+                    f"The `{k}` keyword argument is deprecated "
+                    "and will be ignored.",
+                    DeprecationWarning, stacklevel=2)
 
         # DEPRECATED KWS
         self.buf_len = 0 ### ??
@@ -130,15 +132,13 @@ class Dataset:
 
         if mode in ['r', 'a']:
             if not os.path.exists(self.filename):
-                raise IOError(f"File {self.filename} does not exist.")
+                raise IOError(f"Opening file {self.filename} failed. "
+                              f"File does not exist. To create the file, set "
+                              f"`mode='w'`.")
             self.dataset = xr.open_dataset(self.filename,
                                            engine="netcdf4")
         else:
             self.dataset = xr.Dataset()
-
-        ## Deprecated
-        self.dataset.set_auto_scale(self.autoscale)
-        self.dataset.set_auto_mask(self.automask)
 
     @property
     def global_attr(self):
@@ -164,7 +164,7 @@ class Dataset:
         """
         self.dataset.attrs.update(self.global_attr)
 
-    def create_dim(self, name, n, axis=0):
+    def create_dim(self, name, n, axis=None):
         """
         Create dimension for NetCDF file.
         if it does not yet exist
@@ -175,11 +175,12 @@ class Dataset:
             Name of the NetCDF dimension.
         n : int
             Size of the dimension.
-        axis : int, optional (default: 0)
+        axis : int, optional (default: None)
             The axis along which to create the dimension.
         """
-        if name not in self.dataset.dims.keys():
-            self.dataset.expand_dims({name: n}, axis=axis)
+        if name not in self.dataset.dims:
+            self.dataset = self.dataset.expand_dims(
+                coords={name: n}, axis=axis)
 
     def write_var(self,
                   name,
@@ -345,6 +346,12 @@ class Dataset:
         """
         self.global_attr[name] = value
 
+    def sync(self):
+        """
+        Write data from memory to file
+        """
+        self.dataset.to_netcdf(self.filename)
+
     def flush(self):
         """
         Flush data to disk.
@@ -352,7 +359,7 @@ class Dataset:
         if self.dataset is not None:
             if self.mode in ["w", "r+", "a"]:
                 self._set_global_attr()
-                self.dataset.sync()
+                self.sync()
 
     def close(self):
         """
@@ -381,3 +388,11 @@ class Dataset:
         """
         if hasattr(self, "dataset"):
             self.close()
+
+
+if __name__ == '__main__':
+    ds = Dataset(filename='/tmp/test.nc',
+                 name='testdata', mode='w')
+    ds.create_dim('time', 10)
+    ds.write_var('test', np.random.rand(10)*100, dim='time', dtype=np.int32,
+                 attr={'bla': 'bla'}, zlib=True, chunksizes=None)
